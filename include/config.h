@@ -1,11 +1,13 @@
 #pragma once
 
-// ─── LoRa SX1280 (SPI) ─────────────────────────────────────────────────────
-// SPI bus: MOSI=23, MISO=19, SCK=18 (ESP32 VSPI defaults)
-#define LORA_NSS     15
-#define LORA_NRESET  27
-#define LORA_RFBUSY  33
-#define LORA_DIO1    35   // IRQ (input-only pin — fine for interrupt)
+// ─── LoRa SX1280 (custom SPI bus) ──────────────────────────────────────────
+#define LORA_MISO    19
+#define LORA_MOSI    23
+#define LORA_SCK     18
+#define LORA_NSS     12
+#define LORA_NRESET  13
+#define LORA_RFBUSY  14
+#define LORA_DIO1    27   // IRQ
 
 #define LORA_FREQ_HZ   2400000000UL
 #define LORA_TX_POWER  10     // dBm
@@ -20,7 +22,7 @@
 
 // ─── Master-only pins ───────────────────────────────────────────────────────
 #define SERVO_PIN  25
-#define TEMP_PIN   14   // DS18B20 OneWire data line (TBD — confirm before wiring)
+#define TEMP_PIN   2    // DS18B20 OneWire data line (14 is LORA_RFBUSY)
 
 // ─── Slave-only ─────────────────────────────────────────────────────────────
 #define SLAVE_WIFI_SSID  "RoboController"
