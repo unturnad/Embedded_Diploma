@@ -2,13 +2,43 @@
 #include "master.h"
 #include "config.h"
 #include "system_state.h"
+#include <ESP32Servo.h>
+
+static Servo servo;
+
+// Servo oscillation timing
+static unsigned long servoTimer   = 0;
+static bool          servoAtRest  = true;
+
+static const int  SERVO_REST_DEG  = 0;
+static const int  SERVO_MOVE_DEG  = 45;
+static const unsigned long SERVO_INTERVAL_MS  = 10000; // wait between sweeps
+static const unsigned long SERVO_HOLD_MS      = 500;   // hold at moved position
 
 void masterSetup() {
-    // TODO: init LoRa, servo, temperature sensor
+    servo.attach(SERVO_PIN);
+    servo.write(SERVO_REST_DEG);
+    servoTimer = millis();
+
+    applyState(SystemState::GREEN);  // hardware init succeeded
 }
 
 void masterLoop() {
-    // TODO: read sensor, send telemetry, receive commands
+    unsigned long now = millis();
+
+    if (servoAtRest) {
+        if (now - servoTimer >= SERVO_INTERVAL_MS) {
+            servo.write(SERVO_MOVE_DEG);
+            servoAtRest = false;
+            servoTimer  = now;
+        }
+    } else {
+        if (now - servoTimer >= SERVO_HOLD_MS) {
+            servo.write(SERVO_REST_DEG);
+            servoAtRest = true;
+            servoTimer  = now;
+        }
+    }
 }
 
 #endif
