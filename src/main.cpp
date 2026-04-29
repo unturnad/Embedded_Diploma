@@ -1,18 +1,37 @@
 #include <Arduino.h>
+#include "config.h"
+#include "system_state.h"
 
-// put function declarations here:
-int myFunction(int, int);
+#if !defined(ROLE_MASTER) && !defined(ROLE_SLAVE)
+  #error "No role defined. Use -D ROLE_MASTER or -D ROLE_SLAVE in platformio.ini"
+#endif
+
+#ifdef ROLE_MASTER
+  #include "master.h"
+#endif
+#ifdef ROLE_SLAVE
+  #include "slave.h"
+#endif
 
 void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+    Serial.begin(115200);
+    initStateLEDs();
+
+#ifdef ROLE_MASTER
+    Serial.println("[MASTER] Booting...");
+    masterSetup();
+#endif
+#ifdef ROLE_SLAVE
+    Serial.println("[SLAVE] Booting...");
+    slaveSetup();
+#endif
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-}
-
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+#ifdef ROLE_MASTER
+    masterLoop();
+#endif
+#ifdef ROLE_SLAVE
+    slaveLoop();
+#endif
 }
