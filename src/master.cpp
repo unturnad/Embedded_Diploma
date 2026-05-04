@@ -23,18 +23,25 @@ void masterSetup() {
     applyState(SystemState::GREEN);  // hardware init succeeded
 }
 
+static void logServo(int deg) {
+    int us = servo.readMicroseconds();
+    Serial.printf("[SERVO] %3d deg  |  %4d us\n", deg, us);
+}
+
 void masterLoop() {
     unsigned long now = millis();
 
     if (servoAtRest) {
         if (now - servoTimer >= SERVO_INTERVAL_MS) {
             servo.write(SERVO_MOVE_DEG);
+            logServo(SERVO_MOVE_DEG);
             servoAtRest = false;
             servoTimer  = now;
         }
     } else {
         if (now - servoTimer >= SERVO_HOLD_MS) {
             servo.write(SERVO_REST_DEG);
+            logServo(SERVO_REST_DEG);
             servoAtRest = true;
             servoTimer  = now;
         }

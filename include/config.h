@@ -15,14 +15,14 @@
 
 // ─── Status LEDs — active-low (anode→3.3V, cathode→GPIO) ──────────────────
 // LOW = ON, HIGH = OFF
-#define LED_RED     4
-#define LED_YELLOW  21
+#define LED_RED     2
+#define LED_YELLOW  4
 #define LED_GREEN   5
 #define LED_BLUE    26   // power indicator, always on
 
 // ─── Master-only pins ───────────────────────────────────────────────────────
 #define SERVO_PIN  25
-#define TEMP_PIN   2    // DS18B20 OneWire data line (14 is LORA_RFBUSY)
+#define TEMP_PIN   16   // DS18B20 OneWire data line
 
 // ─── Slave-only ─────────────────────────────────────────────────────────────
 #define SLAVE_WIFI_SSID  "RoboController"
