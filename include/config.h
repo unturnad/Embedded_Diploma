@@ -21,8 +21,9 @@
 #define LED_BLUE    26   // power indicator, always on
 
 // ─── Master-only pins ───────────────────────────────────────────────────────
-#define SERVO_PIN  25
-#define TEMP_PIN   16   // DS18B20 OneWire data line
+#define SERVO_PIN   25
+#define I2C_SDA     21   // AHT10 SDA
+#define I2C_SCL     22   // AHT10 SCL
 
 // ─── Slave-only ─────────────────────────────────────────────────────────────
 #define SLAVE_WIFI_SSID  "RoboController"
