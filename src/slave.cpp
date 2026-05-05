@@ -20,9 +20,10 @@ static volatile int16_t       lastDeg      = 0;
 static volatile uint16_t      lastUs       = 0;
 static volatile int16_t       lastRssi     = 0;
 static volatile int8_t        lastSnr      = 0;
-static volatile int16_t       lastTempC10  = 0;   // °C × 10
-static volatile uint16_t      lastHumPct10 = 0;   // %  × 10
-static volatile unsigned long lastRxTime   = 0;
+static volatile int16_t       lastTempC10    = 0;   // °C × 10
+static volatile uint16_t      lastHumPct10   = 0;   // %  × 10
+static volatile uint8_t       lastMasterState = MASTER_OK;
+static volatile unsigned long lastRxTime      = 0;
 static unsigned long          startTime    = 0;   // set at boot, baseline before first packet
 
 // Free-space path loss at 2.4 GHz: d = 10^((TxPower - RSSI - 40.05) / 20) m
@@ -30,21 +31,54 @@ static float rssiToDistance(int16_t rssi) {
     return powf(10.0f, ((float)LORA_TX_POWER - (float)rssi - 40.05f) / 20.0f);
 }
 
-// GREEN < 3 s,  YELLOW 3-8 s,  RED > 8 s (clock starts at boot if no packet yet)
-static SystemState getCommsState() {
+// Human-readable reason for the current state — set by getOverallState()
+static const char* stateReason = "Initialising";
+
+// Maps MASTER_* code → { SystemState, description }
+struct MasterInfo { SystemState s; const char* reason; };
+static const MasterInfo MASTER_MAP[] = {
+    { SystemState::GREEN,  "All systems OK"       },  // MASTER_OK
+    { SystemState::YELLOW, "Sensor intermittent"  },  // MASTER_SENSOR_WARN
+    { SystemState::YELLOW, "TX intermittent"      },  // MASTER_TX_WARN
+    { SystemState::RED,    "Sensor not found"     },  // MASTER_NO_SENSOR
+    { SystemState::RED,    "Servo detached"       },  // MASTER_NO_SERVO
+    { SystemState::RED,    "Sensor failed"        },  // MASTER_SENSOR_FAIL
+    { SystemState::RED,    "TX failed"            },  // MASTER_TX_FAIL
+};
+
+static SystemState getOverallState() {
+    // ── Link health ──────────────────────────────────────────────────────────
     unsigned long ref = (lastRxTime == 0) ? startTime : (unsigned long)lastRxTime;
     unsigned long age = millis() - ref;
 
     static unsigned long dbgTimer = 0;
     if (millis() - dbgTimer >= 2000) {
-        Serial.printf("[STATE] age=%lums  lastRx=%s\n",
-                      age, lastRxTime == 0 ? "never" : "set");
+        Serial.printf("[STATE] link_age=%lums  master_code=%u\n", age, (unsigned)lastMasterState);
         dbgTimer = millis();
     }
 
-    if (age < 3000) return SystemState::GREEN;
-    if (age < 8000) return SystemState::YELLOW;
-    return SystemState::RED;
+    SystemState linkState;
+    const char*  linkReason;
+    if      (age < 3000) { linkState = SystemState::GREEN;  linkReason = nullptr;          }
+    else if (age < 8000) { linkState = SystemState::YELLOW; linkReason = "Link degraded";  }
+    else                 { linkState = SystemState::RED;    linkReason = "Link lost";       }
+
+    // ── Master health ────────────────────────────────────────────────────────
+    uint8_t code = (lastMasterState < 7) ? (uint8_t)lastMasterState : MASTER_OK;
+    SystemState masterState  = MASTER_MAP[code].s;
+    const char* masterReason = MASTER_MAP[code].reason;
+
+    // ── Combine: worst wins; link problem takes display priority ─────────────
+    if (linkState == SystemState::RED || masterState == SystemState::RED) {
+        stateReason = (linkState == SystemState::RED) ? linkReason : masterReason;
+        return SystemState::RED;
+    }
+    if (linkState == SystemState::YELLOW || masterState == SystemState::YELLOW) {
+        stateReason = (linkState == SystemState::YELLOW) ? linkReason : masterReason;
+        return SystemState::YELLOW;
+    }
+    stateReason = masterReason;   // "All systems OK"
+    return SystemState::GREEN;
 }
 
 // ── LoRa receive task — Core 0 ───────────────────────────────────────────────
@@ -65,9 +99,10 @@ static void loraRxTask(void*) {
             if (pkt->type == PKT_SERVO && pkt->magic == PKT_MAGIC) {
                 lastDeg      = pkt->deg;
                 lastUs       = pkt->us;
-                lastTempC10  = pkt->tempC10;
-                lastHumPct10 = pkt->humPct10;
-                lastRssi     = LT.readPacketRSSI();
+                lastTempC10    = pkt->tempC10;
+                lastHumPct10   = pkt->humPct10;
+                lastMasterState = pkt->masterState;
+                lastRssi       = LT.readPacketRSSI();
                 lastSnr      = LT.readPacketSNR();
                 lastRxTime   = millis();
 
@@ -153,7 +188,7 @@ function poll() {
       document.getElementById('rssi').textContent = d.rssi + ' dBm';
       document.getElementById('snr').textContent  = d.snr  + ' dB';
       document.getElementById('dist').textContent = d.dist + ' m';
-      document.getElementById('state').textContent = d.state;
+      document.getElementById('state').textContent = d.reason;
       document.getElementById('dot').className = 'dot ' + d.state;
     })
     .catch(() => {});
@@ -172,7 +207,7 @@ static void handleRoot() {
 }
 
 static void handleData() {
-    SystemState s = getCommsState();
+    SystemState s = getOverallState();
     applyState(s);
 
     const char* stateStr;
@@ -187,12 +222,12 @@ static void handleData() {
     snprintf(tempStr, sizeof(tempStr), "%.1f", lastTempC10  / 10.0f);
     snprintf(humStr,  sizeof(humStr),  "%.1f", lastHumPct10 / 10.0f);
 
-    char buf[220];
+    char buf[260];
     snprintf(buf, sizeof(buf),
         "{\"deg\":%d,\"us\":%u,\"temp\":%s,\"hum\":%s,"
-        "\"rssi\":%d,\"snr\":%d,\"dist\":%s,\"state\":\"%s\"}",
+        "\"rssi\":%d,\"snr\":%d,\"dist\":%s,\"state\":\"%s\",\"reason\":\"%s\"}",
         (int)lastDeg, (unsigned)lastUs, tempStr, humStr,
-        (int)lastRssi, (int)lastSnr, distStr, stateStr);
+        (int)lastRssi, (int)lastSnr, distStr, stateStr, stateReason);
 
     server.send(200, "application/json", buf);
 }
@@ -228,7 +263,7 @@ void slaveSetup() {
 }
 
 void slaveLoop() {
-    applyState(getCommsState());   // LEDs update independently of browser
+    applyState(getOverallState());   // LEDs update independently of browser
     server.handleClient();
 }
 
