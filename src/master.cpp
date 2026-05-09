@@ -7,24 +7,29 @@
 #include <Wire.h>
 #include <SX128XLT.h>
 #include <ESP32Servo.h>
+#include <esp_task_wdt.h>
+
+#define WDT_TIMEOUT_S  15   // reset if main loop stalls longer than this
 
 static SX128XLT LT;
 static Servo    servo;
 static bool     ahtOk = false;
 
-static unsigned long servoTimer  = 0;
-static unsigned long txTimer     = 0;
-static bool servoAtRest          = true;
-static uint8_t     sensorFails    = 0;
-static uint8_t     txFails        = 0;
-static uint8_t     masterCode     = MASTER_OK;   // current MASTER_* code
-static SystemState currentState   = SystemState::YELLOW;
+static unsigned long servoTimer    = 0;
+static unsigned long txTimer       = 0;
+static unsigned long recoveryTimer = 0;
+static bool servoAtRest            = true;
+static uint8_t sensorFails         = 0;
+static uint8_t txFails             = 0;
+static uint8_t masterCode          = MASTER_OK;
+static SystemState currentState    = SystemState::YELLOW;
 
 static const int  SERVO_REST_DEG             = 0;
 static const int  SERVO_MOVE_DEG             = 45;
 static const unsigned long SERVO_INTERVAL_MS = 3000;
 static const unsigned long SERVO_HOLD_MS     = 1500;
 static const unsigned long TX_INTERVAL_MS    = 1000;
+static const unsigned long RECOVERY_INTERVAL_MS = 10000;
 
 static const uint8_t FAILS_YELLOW = 2;
 static const uint8_t FAILS_RED    = 5;
@@ -33,51 +38,71 @@ static const uint8_t FAILS_RED    = 5;
 #define AHT10_ADDR 0x38
 
 static bool aht10Init() {
-    // Confirm device ACKs its address (same check as I2C scanner)
     Wire.beginTransmission(AHT10_ADDR);
     if (Wire.endTransmission() != 0) return false;
 
-    // Soft reset
     Wire.beginTransmission(AHT10_ADDR);
     Wire.write(0xBA);
     Wire.endTransmission();
     delay(20);
 
-    // Calibration command (0xBE = broader compatibility than 0xE1)
     Wire.beginTransmission(AHT10_ADDR);
-    Wire.write(0xBE);
-    Wire.write(0x08);
-    Wire.write(0x00);
+    Wire.write(0xBE); Wire.write(0x08); Wire.write(0x00);
     Wire.endTransmission();
-    delay(300);   // datasheet: wait for calibration to complete
+    delay(300);
 
     return true;
 }
 
 static bool aht10Read(float &temp, float &hum) {
-    // Trigger measurement
     Wire.beginTransmission(AHT10_ADDR);
-    Wire.write(0xAC);
-    Wire.write(0x33);
-    Wire.write(0x00);
+    Wire.write(0xAC); Wire.write(0x33); Wire.write(0x00);
     if (Wire.endTransmission() != 0) return false;
     delay(80);
 
     if (Wire.requestFrom((uint8_t)AHT10_ADDR, (uint8_t)6) != 6) return false;
     uint8_t d[6];
     for (auto &b : d) b = Wire.read();
-
-    if (d[0] & 0x80) return false;   // busy bit still set
+    if (d[0] & 0x80) return false;
 
     uint32_t rawHum  = ((uint32_t)d[1] << 12) | ((uint32_t)d[2] << 4) | (d[3] >> 4);
     uint32_t rawTemp = ((uint32_t)(d[3] & 0x0F) << 16) | ((uint32_t)d[4] << 8) | d[5];
-
     hum  = (rawHum  / 1048576.0f) * 100.0f;
     temp = (rawTemp / 1048576.0f) * 200.0f - 50.0f;
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+static bool loraInit() {
+    SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
+    if (!LT.begin(LORA_NSS, LORA_NRESET, LORA_RFBUSY, LORA_DIO1, DEVICE_SX1280))
+        return false;
+    LT.setupLoRa(LORA_FREQ_HZ, 0, LORA_SF7, LORA_BW_0800, LORA_CR_4_5);
+    return true;
+}
+
+// ─── Recovery ─────────────────────────────────────────────────────────────────
+// Retries RED-level subsystems every RECOVERY_INTERVAL_MS without rebooting.
+
+static void tryRecovery() {
+    unsigned long now = millis();
+    if (now - recoveryTimer < RECOVERY_INTERVAL_MS) return;
+    recoveryTimer = now;
+
+    if (masterCode == MASTER_SENSOR_FAIL || masterCode == MASTER_NO_SENSOR) {
+        Serial.println("[RECOVERY] Retrying AHT10...");
+        ahtOk = aht10Init();
+        if (ahtOk) { sensorFails = 0; Serial.println("[RECOVERY] AHT10 restored"); }
+        else          Serial.println("[RECOVERY] AHT10 still unavailable");
+    }
+
+    if (masterCode == MASTER_TX_FAIL) {
+        Serial.println("[RECOVERY] Retrying LoRa TX...");
+        if (loraInit()) { txFails = 0; Serial.println("[RECOVERY] LoRa TX restored"); }
+        else              Serial.println("[RECOVERY] LoRa TX still unavailable");
+    }
+}
+
+// ─── State machine ────────────────────────────────────────────────────────────
 
 static void updateState(bool sensorOk, bool txOk) {
     uint8_t prev = masterCode;
@@ -97,10 +122,9 @@ static void updateState(bool sensorOk, bool txOk) {
         else                                  masterCode = MASTER_OK;
     }
 
-    // Derive LED state from code
-    currentState = (masterCode == MASTER_OK)                          ? SystemState::GREEN
+    currentState = (masterCode == MASTER_OK)                      ? SystemState::GREEN
                  : (masterCode == MASTER_SENSOR_WARN ||
-                    masterCode == MASTER_TX_WARN)                     ? SystemState::YELLOW
+                    masterCode == MASTER_TX_WARN)                 ? SystemState::YELLOW
                  : SystemState::RED;
 
     if (masterCode != prev) {
@@ -112,11 +136,14 @@ static void updateState(bool sensorOk, bool txOk) {
     }
 
     applyState(currentState);
+
+    if (currentState == SystemState::RED) tryRecovery();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 static void logServo(int deg) {
-    int us = servo.readMicroseconds();
-    Serial.printf("[SERVO] %3d deg  |  %4d us\n", deg, us);
+    Serial.printf("[SERVO] %3d deg  |  %4d us\n", deg, servo.readMicroseconds());
 }
 
 static void sendTelemetry() {
@@ -147,20 +174,22 @@ static void sendTelemetry() {
     updateState(sensorOk, txOk);
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 void masterSetup() {
+    esp_task_wdt_init(WDT_TIMEOUT_S, true);  // panic-reset if loop stalls
+    esp_task_wdt_add(NULL);                   // subscribe Arduino loop task
+
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(100000);
-
     ahtOk = aht10Init();
-    Serial.printf("[AHT10] %s\n", ahtOk ? "Ready" : "Init failed");
+    Serial.printf("[AHT10] %s\n", ahtOk ? "Ready" : "Not found");
 
-    SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
-    if (!LT.begin(LORA_NSS, LORA_NRESET, LORA_RFBUSY, LORA_DIO1, DEVICE_SX1280)) {
+    if (!loraInit()) {
         Serial.println("[LORA] Init failed");
         applyState(SystemState::RED);
         return;
     }
-    LT.setupLoRa(LORA_FREQ_HZ, 0, LORA_SF7, LORA_BW_0800, LORA_CR_4_5);
     Serial.println("[LORA] Ready");
 
     servo.attach(SERVO_PIN);
@@ -168,11 +197,12 @@ void masterSetup() {
     servoTimer = millis();
     txTimer    = millis();
 
-    // State is GREEN only if AHT10 init succeeded; first TX will confirm fully
     applyState(ahtOk ? SystemState::YELLOW : SystemState::RED);
 }
 
 void masterLoop() {
+    esp_task_wdt_reset();   // feed watchdog
+
     unsigned long now = millis();
 
     if (servoAtRest) {

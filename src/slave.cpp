@@ -86,13 +86,14 @@ static SystemState getOverallState() {
 // web server and WiFi stack on Core 1 fully responsive at all times.
 
 static void loraRxTask(void*) {
-    // receive() busy-spins on DIO1 — IDLE0 never runs on Core 0, so remove
-    // it from WDT monitoring to prevent spurious reboot.
+    // IDLE0 never runs since we busy-wait here — remove from WDT, add this task instead
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+    esp_task_wdt_add(NULL);   // WDT now monitors lora_rx; resets every receive() cycle
 
     for (;;) {
         uint8_t rxBuf[sizeof(ServoPacket)] = {};
         uint8_t rxLen = LT.receive(rxBuf, sizeof(rxBuf), 5000, WAIT_RX);
+        esp_task_wdt_reset();   // receive() returned (packet or 5 s timeout) — feed WDT
 
         if (rxLen >= (uint8_t)sizeof(ServoPacket)) {
             auto* pkt = reinterpret_cast<ServoPacket*>(rxBuf);
@@ -235,6 +236,9 @@ static void handleData() {
 // ── Setup / Loop ──────────────────────────────────────────────────────────────
 
 void slaveSetup() {
+    esp_task_wdt_init(15, true);  // 15 s timeout, panic-reset on trigger
+    esp_task_wdt_add(NULL);        // subscribe Arduino loop task (Core 1)
+
     startTime = millis();
 
     WiFi.softAP(SLAVE_WIFI_SSID, SLAVE_WIFI_PASS);
@@ -263,6 +267,7 @@ void slaveSetup() {
 }
 
 void slaveLoop() {
+    esp_task_wdt_reset();            // feed watchdog
     applyState(getOverallState());   // LEDs update independently of browser
     server.handleClient();
 }
