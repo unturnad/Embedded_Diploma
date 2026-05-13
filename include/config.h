@@ -25,6 +25,10 @@
 #define I2C_SDA     21   // AHT10 SDA
 #define I2C_SCL     22   // AHT10 SCL
 
+// ─── Temperature thresholds ─────────────────────────────────────────────────
+#define TEMP_WARN_C   30.0f   // ≥ this → YELLOW "Temperature high"
+#define TEMP_CRIT_C   32.0f   // ≥ this → RED    "Temperature critical"
+
 // ─── Slave-only ─────────────────────────────────────────────────────────────
 #define SLAVE_WIFI_SSID  "RoboController"
 #define SLAVE_WIFI_PASS  "12345678"

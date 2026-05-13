@@ -11,7 +11,9 @@
 #define MASTER_NO_SENSOR    3   // RED: AHT10 not initialized
 #define MASTER_NO_SERVO     4   // RED: servo detached
 #define MASTER_SENSOR_FAIL  5   // RED: AHT10 completely failed
-#define MASTER_TX_FAIL      6   // RED: LoRa TX completely failed
+#define MASTER_TX_FAIL      6   // RED:    LoRa TX completely failed
+#define MASTER_TEMP_WARN    7   // YELLOW: temperature >= TEMP_WARN_C
+#define MASTER_TEMP_CRIT    8   // RED:    temperature >= TEMP_CRIT_C
 
 struct __attribute__((packed)) ServoPacket {
     uint8_t  type;         // PKT_SERVO

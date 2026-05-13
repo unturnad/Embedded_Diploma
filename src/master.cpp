@@ -104,7 +104,7 @@ static void tryRecovery() {
 
 // ─── State machine ────────────────────────────────────────────────────────────
 
-static void updateState(bool sensorOk, bool txOk) {
+static void updateState(bool sensorOk, bool txOk, float temp) {
     uint8_t prev = masterCode;
 
     if (!ahtOk) {
@@ -115,24 +115,28 @@ static void updateState(bool sensorOk, bool txOk) {
         sensorFails = sensorOk ? 0 : (uint8_t)(sensorFails + 1);
         txFails     = txOk     ? 0 : (uint8_t)(txFails     + 1);
 
-        if      (sensorFails >= FAILS_RED)    masterCode = MASTER_SENSOR_FAIL;
-        else if (txFails     >= FAILS_RED)    masterCode = MASTER_TX_FAIL;
-        else if (sensorFails >= FAILS_YELLOW) masterCode = MASTER_SENSOR_WARN;
-        else if (txFails     >= FAILS_YELLOW) masterCode = MASTER_TX_WARN;
-        else                                  masterCode = MASTER_OK;
+        if      (sensorFails >= FAILS_RED)              masterCode = MASTER_SENSOR_FAIL;
+        else if (txFails     >= FAILS_RED)              masterCode = MASTER_TX_FAIL;
+        else if (sensorOk && temp >= TEMP_CRIT_C)       masterCode = MASTER_TEMP_CRIT;
+        else if (sensorFails >= FAILS_YELLOW)           masterCode = MASTER_SENSOR_WARN;
+        else if (txFails     >= FAILS_YELLOW)           masterCode = MASTER_TX_WARN;
+        else if (sensorOk && temp >= TEMP_WARN_C)       masterCode = MASTER_TEMP_WARN;
+        else                                            masterCode = MASTER_OK;
     }
 
     currentState = (masterCode == MASTER_OK)                      ? SystemState::GREEN
                  : (masterCode == MASTER_SENSOR_WARN ||
-                    masterCode == MASTER_TX_WARN)                 ? SystemState::YELLOW
+                    masterCode == MASTER_TX_WARN    ||
+                    masterCode == MASTER_TEMP_WARN)               ? SystemState::YELLOW
                  : SystemState::RED;
 
     if (masterCode != prev) {
         static const char* names[] = {
             "OK", "Sensor warn", "TX warn",
-            "No sensor", "No servo", "Sensor fail", "TX fail"
+            "No sensor", "No servo", "Sensor fail", "TX fail",
+            "Temp high", "Temp critical"
         };
-        Serial.printf("[STATE] %s\n", names[masterCode < 7 ? masterCode : 0]);
+        Serial.printf("[STATE] %s\n", names[masterCode < 9 ? masterCode : 0]);
     }
 
     applyState(currentState);
@@ -171,7 +175,7 @@ static void sendTelemetry() {
     bool txOk = (len > 0);
     if (!txOk) Serial.println("[LORA] TX error");
 
-    updateState(sensorOk, txOk);
+    updateState(sensorOk, txOk, temp);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

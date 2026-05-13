@@ -37,13 +37,15 @@ static const char* stateReason = "Initialising";
 // Maps MASTER_* code → { SystemState, description }
 struct MasterInfo { SystemState s; const char* reason; };
 static const MasterInfo MASTER_MAP[] = {
-    { SystemState::GREEN,  "All systems OK"       },  // MASTER_OK
-    { SystemState::YELLOW, "Sensor intermittent"  },  // MASTER_SENSOR_WARN
-    { SystemState::YELLOW, "TX intermittent"      },  // MASTER_TX_WARN
-    { SystemState::RED,    "Sensor not found"     },  // MASTER_NO_SENSOR
-    { SystemState::RED,    "Servo detached"       },  // MASTER_NO_SERVO
-    { SystemState::RED,    "Sensor failed"        },  // MASTER_SENSOR_FAIL
-    { SystemState::RED,    "TX failed"            },  // MASTER_TX_FAIL
+    { SystemState::GREEN,  "All systems OK"       },  // 0 MASTER_OK
+    { SystemState::YELLOW, "Sensor intermittent"  },  // 1 MASTER_SENSOR_WARN
+    { SystemState::YELLOW, "TX intermittent"      },  // 2 MASTER_TX_WARN
+    { SystemState::RED,    "Sensor not found"     },  // 3 MASTER_NO_SENSOR
+    { SystemState::RED,    "Servo detached"       },  // 4 MASTER_NO_SERVO
+    { SystemState::RED,    "Sensor failed"        },  // 5 MASTER_SENSOR_FAIL
+    { SystemState::RED,    "TX failed"            },  // 6 MASTER_TX_FAIL
+    { SystemState::YELLOW, "Temperature high"     },  // 7 MASTER_TEMP_WARN
+    { SystemState::RED,    "Temperature critical" },  // 8 MASTER_TEMP_CRIT
 };
 
 static SystemState getOverallState() {
@@ -64,7 +66,7 @@ static SystemState getOverallState() {
     else                 { linkState = SystemState::RED;    linkReason = "Link lost";       }
 
     // ── Master health ────────────────────────────────────────────────────────
-    uint8_t code = (lastMasterState < 7) ? (uint8_t)lastMasterState : MASTER_OK;
+    uint8_t code = (lastMasterState < 9) ? (uint8_t)lastMasterState : MASTER_OK;
     SystemState masterState  = MASTER_MAP[code].s;
     const char* masterReason = MASTER_MAP[code].reason;
 
