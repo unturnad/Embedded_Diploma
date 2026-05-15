@@ -44,6 +44,7 @@ static const MasterInfo MASTER_MAP[] = {
     { SystemState::RED,    "Servo detached"       },  // MASTER_NO_SERVO
     { SystemState::RED,    "Sensor failed"        },  // MASTER_SENSOR_FAIL
     { SystemState::RED,    "TX failed"            },  // MASTER_TX_FAIL
+    { SystemState::RED,    "I2C bus fault"        },  // MASTER_I2C_FAULT
 };
 
 static SystemState getOverallState() {
@@ -64,7 +65,7 @@ static SystemState getOverallState() {
     else                 { linkState = SystemState::RED;    linkReason = "Link lost";       }
 
     // ── Master health ────────────────────────────────────────────────────────
-    uint8_t code = (lastMasterState < 7) ? (uint8_t)lastMasterState : MASTER_OK;
+    uint8_t code = (lastMasterState < 8) ? (uint8_t)lastMasterState : MASTER_OK;
     SystemState masterState  = MASTER_MAP[code].s;
     const char* masterReason = MASTER_MAP[code].reason;
 

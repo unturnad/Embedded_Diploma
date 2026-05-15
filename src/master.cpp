@@ -13,7 +13,8 @@
 
 static SX128XLT LT;
 static Servo    servo;
-static bool     ahtOk = false;
+static bool     ahtOk       = false;
+static bool     i2cBusFault = false;
 
 static unsigned long servoTimer    = 0;
 static unsigned long txTimer       = 0;
@@ -37,9 +38,42 @@ static const uint8_t FAILS_RED    = 5;
 // ─── AHT10 bare I2C ───────────────────────────────────────────────────────────
 #define AHT10_ADDR 0x38
 
+// 9-clock I2C bus recovery — releases any slave holding SDA low.
+static void recoverI2CBus() {
+    Serial.println("[I2C] Bus stuck — running 9-clock recovery...");
+    Wire.end();
+    delay(5);
+
+    pinMode(I2C_SCL, OUTPUT);
+    pinMode(I2C_SDA, INPUT);           // pull-up holds SDA; don't fight a stuck slave
+
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(I2C_SCL, LOW);  delayMicroseconds(5);
+        digitalWrite(I2C_SCL, HIGH); delayMicroseconds(5);
+        if (digitalRead(I2C_SDA)) {
+            Serial.printf("[I2C] SDA released after %d clocks\n", i + 1);
+            break;
+        }
+    }
+
+    // STOP condition: SDA LOW → HIGH while SCL HIGH
+    pinMode(I2C_SDA, OUTPUT);
+    digitalWrite(I2C_SDA, LOW);  delayMicroseconds(5);
+    digitalWrite(I2C_SCL, HIGH); delayMicroseconds(5);
+    digitalWrite(I2C_SDA, HIGH); delayMicroseconds(5);
+
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(100000);
+    delay(10);
+    Serial.println("[I2C] Bus recovery complete");
+}
+
 static bool aht10Init() {
     Wire.beginTransmission(AHT10_ADDR);
-    if (Wire.endTransmission() != 0) return false;
+    uint8_t err = Wire.endTransmission();
+    if (err == 4) { i2cBusFault = true;  return false; }  // bus stuck (not just NACK)
+    if (err != 0) { i2cBusFault = false; return false; }  // sensor absent
+    i2cBusFault = false;
 
     Wire.beginTransmission(AHT10_ADDR);
     Wire.write(0xBA);
@@ -57,7 +91,9 @@ static bool aht10Init() {
 static bool aht10Read(float &temp, float &hum) {
     Wire.beginTransmission(AHT10_ADDR);
     Wire.write(0xAC); Wire.write(0x33); Wire.write(0x00);
-    if (Wire.endTransmission() != 0) return false;
+    uint8_t err = Wire.endTransmission();
+    if (err == 4) { i2cBusFault = true;  return false; }
+    if (err != 0) { i2cBusFault = false; return false; }
     delay(80);
 
     if (Wire.requestFrom((uint8_t)AHT10_ADDR, (uint8_t)6) != 6) return false;
@@ -88,7 +124,13 @@ static void tryRecovery() {
     if (now - recoveryTimer < RECOVERY_INTERVAL_MS) return;
     recoveryTimer = now;
 
-    if (masterCode == MASTER_SENSOR_FAIL || masterCode == MASTER_NO_SENSOR) {
+    if (masterCode == MASTER_I2C_FAULT) {
+        recoverI2CBus();
+        i2cBusFault = false;
+        ahtOk = aht10Init();
+        if (ahtOk) { sensorFails = 0; Serial.println("[RECOVERY] I2C + AHT10 restored"); }
+        else          Serial.println("[RECOVERY] I2C recovered but AHT10 still absent");
+    } else if (masterCode == MASTER_SENSOR_FAIL || masterCode == MASTER_NO_SENSOR) {
         Serial.println("[RECOVERY] Retrying AHT10...");
         ahtOk = aht10Init();
         if (ahtOk) { sensorFails = 0; Serial.println("[RECOVERY] AHT10 restored"); }
@@ -107,7 +149,9 @@ static void tryRecovery() {
 static void updateState(bool sensorOk, bool txOk) {
     uint8_t prev = masterCode;
 
-    if (!ahtOk) {
+    if (i2cBusFault) {
+        masterCode = MASTER_I2C_FAULT;
+    } else if (!ahtOk) {
         masterCode = MASTER_NO_SENSOR;
     } else if (!servo.attached()) {
         masterCode = MASTER_NO_SERVO;
@@ -130,9 +174,9 @@ static void updateState(bool sensorOk, bool txOk) {
     if (masterCode != prev) {
         static const char* names[] = {
             "OK", "Sensor warn", "TX warn",
-            "No sensor", "No servo", "Sensor fail", "TX fail"
+            "No sensor", "No servo", "Sensor fail", "TX fail", "I2C bus fault"
         };
-        Serial.printf("[STATE] %s\n", names[masterCode < 7 ? masterCode : 0]);
+        Serial.printf("[STATE] %s\n", names[masterCode < 8 ? masterCode : 0]);
     }
 
     applyState(currentState);
@@ -200,8 +244,32 @@ void masterSetup() {
     applyState(ahtOk ? SystemState::YELLOW : SystemState::RED);
 }
 
+#ifdef I2C_FAULT_DEMO
+static void runI2CFaultDemo() {
+    static unsigned long demoTimer = 0;
+    static bool          faultLive = false;
+    unsigned long        now       = millis();
+
+    if (!faultLive && now - demoTimer >= 30000) {
+        Wire.end();          // physically stop the I2C bus peripheral
+        i2cBusFault = true;
+        ahtOk       = false;
+        faultLive   = true;
+        Serial.println("[DEMO] I2C bus stopped — waiting for auto-recovery...");
+    }
+    if (faultLive && ahtOk && !i2cBusFault) {
+        faultLive = false;
+        demoTimer = millis();
+    }
+}
+#endif
+
 void masterLoop() {
-    esp_task_wdt_reset();   // feed watchdog
+    esp_task_wdt_reset();
+
+#ifdef I2C_FAULT_DEMO
+    runI2CFaultDemo();
+#endif
 
     unsigned long now = millis();
 

@@ -12,6 +12,7 @@
 #define MASTER_NO_SERVO     4   // RED: servo detached
 #define MASTER_SENSOR_FAIL  5   // RED: AHT10 completely failed
 #define MASTER_TX_FAIL      6   // RED: LoRa TX completely failed
+#define MASTER_I2C_FAULT    7   // RED: I2C bus electrically stuck
 
 struct __attribute__((packed)) ServoPacket {
     uint8_t  type;         // PKT_SERVO

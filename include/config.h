@@ -25,6 +25,10 @@
 #define I2C_SDA     21   // AHT10 SDA
 #define I2C_SCL     22   // AHT10 SCL
 
+// ─── Demo / testing ──────────────────────────────────────────────────────────
+// Uncomment to inject a real I2C bus fault every 30 s and show auto-recovery.
+#define I2C_FAULT_DEMO
+
 // ─── Slave-only ─────────────────────────────────────────────────────────────
 #define SLAVE_WIFI_SSID  "RoboController"
 #define SLAVE_WIFI_PASS  "12345678"
